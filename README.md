@@ -9,6 +9,8 @@
 ![Version](https://img.shields.io/badge/Version-2.0.0-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+[![Download](https://img.shields.io/badge/Download-SysGauge.exe-2ea44f?logo=windows&logoColor=white)](https://github.com/qepan0520/SysGauge-Go/releases/latest)
+
 SysGauge samples CPU and memory metrics straight from the Windows API (`GetSystemTimes`, `NtQuerySystemInformation`, `GlobalMemoryStatusEx`, `CallNtPowerInformation`, `GetPerformanceInfo`), draws the charts with a plain Win32 window and GDI, and runs `flush + fsync` after every sample when writing CSV. No Qt, no WebView2, no CGO — a single executable built for long recording sessions, stutter investigations, and performance test reports.
 
 ## Screenshots

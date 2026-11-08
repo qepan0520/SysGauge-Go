@@ -9,6 +9,8 @@
 ![Version](https://img.shields.io/badge/Version-2.0.0-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+[![下载](https://img.shields.io/badge/Download-SysGauge.exe-2ea44f?logo=windows&logoColor=white)](https://github.com/qepan0520/SysGauge-Go/releases/latest)
+
 SysGauge 直接调用 Windows API（`GetSystemTimes`、`NtQuerySystemInformation`、`GlobalMemoryStatusEx`、`CallNtPowerInformation`、`GetPerformanceInfo`）采集 CPU 与内存指标，使用纯 Win32 窗口 + GDI 绘制实时曲线，并在每次采样后立即 `flush + fsync` 写入 CSV。不依赖 Qt、WebView2 与 CGO，单文件 exe 即可运行，适合长时间记录、排查卡顿、制作性能测试报告。
 
 ## 界面预览
