@@ -1,0 +1,8 @@
+# 统一使用 LF 换行，避免 Windows / macOS 之间的换行差异
+* text=auto eol=lf
+
+# 二进制资源
+*.ico binary
+*.png binary
+*.syso binary
+*.exe binary

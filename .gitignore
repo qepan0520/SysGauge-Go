@@ -1,0 +1,18 @@
+# ---------- Go 构建产物 ----------
+/SysGauge.exe
+/SysGauge
+*.exe
+*.test
+*.out
+
+# ---------- 本地运行 / 开发产物 ----------
+*.log
+.screenshots/
+.trae/
+
+# ---------- 编辑器与系统文件 ----------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
