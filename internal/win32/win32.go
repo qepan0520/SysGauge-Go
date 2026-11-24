@@ -4,6 +4,7 @@
 package win32
 
 import (
+	"strings"
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
@@ -207,6 +208,10 @@ var (
 	procIsIconic              = user32.NewProc("IsIconic")
 	procSetProcessDpiAwareCtx = user32.NewProc("SetProcessDpiAwarenessContext")
 	procSetProcessDPIAware    = user32.NewProc("SetProcessDPIAware")
+	procEnumWindows           = user32.NewProc("EnumWindows")
+	procGetWindowTextW        = user32.NewProc("GetWindowTextW")
+	procIsWindowVisible       = user32.NewProc("IsWindowVisible")
+	procRegisterWindowMessage = user32.NewProc("RegisterWindowMessageW")
 	procGetModuleHandleW      = kernel32.NewProc("GetModuleHandleW")
 	procGetTickCount64        = kernel32.NewProc("GetTickCount64")
 
@@ -473,6 +478,43 @@ func IsZoomed(hwnd uintptr) bool {
 func IsIconic(hwnd uintptr) bool {
 	r, _, _ := procIsIconic.Call(hwnd)
 	return r != 0
+}
+
+// RegisterWindowMessage registers a message that every process can share.
+func RegisterWindowMessage(name string) uint32 {
+	ptr, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return 0
+	}
+	r, _, _ := procRegisterWindowMessage.Call(uintptr(unsafe.Pointer(ptr)))
+	return uint32(r)
+}
+
+// VisibleWindowWithTitlePrefix 报告是否存在标题以 prefix 开头的可见、非最小化
+// 顶层窗口。它用来判断激活请求是否真的把已有窗口带了回来。
+func VisibleWindowWithTitlePrefix(prefix string) bool {
+	found := false
+	callback := syscall.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
+		if visible, _, _ := procIsWindowVisible.Call(hwnd); visible == 0 {
+			return 1
+		}
+		if iconic, _, _ := procIsIconic.Call(hwnd); iconic != 0 {
+			return 1
+		}
+		var buf [256]uint16
+		n, _, _ := procGetWindowTextW.Call(hwnd,
+			uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+		if n == 0 {
+			return 1
+		}
+		if strings.HasPrefix(string(utf16.Decode(buf[:int(n)])), prefix) {
+			found = true
+			return 0
+		}
+		return 1
+	})
+	procEnumWindows.Call(callback, 0)
+	return found
 }
 
 // TickCount returns milliseconds since system start.

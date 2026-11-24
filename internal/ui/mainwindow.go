@@ -16,7 +16,11 @@ import (
 // AppName and Version are shown in the title bar and notifications.
 const (
 	AppName = "SysGauge"
-	Version = "2.0.0"
+	Version = "2.0.1"
+
+	// WindowTitlePrefix 是主窗口标题的固定前缀（两版一致），供单实例探测
+	// 判断已有窗口是否已经显示。
+	WindowTitlePrefix = AppName + " v"
 )
 
 const (
@@ -38,6 +42,9 @@ var (
 	mainClassOnce sync.Once
 	mainClassName string
 	mainByHWND    sync.Map
+
+	// taskbarCreatedMessage 由 Explorer 重启后广播，用于重建托盘图标。
+	taskbarCreatedMessage uint32
 )
 
 // MainWindow hosts the custom-drawn dashboard inside a native frame.
@@ -73,6 +80,8 @@ func NewMainWindow(cfg *config.Config, smp *sampler.Sampler) (*MainWindow, error
 	if mainClassName == "" {
 		return nil, fmt.Errorf("cannot register main window class")
 	}
+
+	taskbarCreatedMessage = win32.RegisterWindowMessage("TaskbarCreated")
 
 	win32.OleInit()
 	theme := LoadTheme()
@@ -207,6 +216,14 @@ func mainWindowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		return win32.DefWindowProc(hwnd, msg, wparam, lparam)
 	}
 	m := value.(*MainWindow)
+
+	// Explorer 重启后系统会广播 TaskbarCreated，旧的托盘图标已随之消失，
+	// 必须重新添加，否则进程会变成一个没有任何入口的幽灵。
+	if taskbarCreatedMessage != 0 && msg == taskbarCreatedMessage {
+		m.tray = nil
+		m.createTray()
+		return 0
+	}
 
 	switch msg {
 	case win32.WM_SIZE:

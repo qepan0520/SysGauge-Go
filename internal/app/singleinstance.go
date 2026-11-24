@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -12,6 +13,9 @@ const (
 	mutexName = `Local\SysGauge_SingleInstance_9f2c`
 	eventName = `Local\SysGauge_Activate_9f2c`
 	pipeName  = `\\.\pipe\SysGauge_SingleInstance_9f2c`
+
+	// activationTimeout 限定新进程等待已有实例响应激活请求的最长时间。
+	activationTimeout = 2 * time.Second
 )
 
 // Guard keeps the application single-instance and wakes the running window.
@@ -19,38 +23,77 @@ type Guard struct {
 	mutex   windows.Handle
 	event   windows.Handle
 	stopped atomic.Bool
+
+	// TookOver 为真表示启动时存在已有实例但它在 activationTimeout 内没有
+	// 响应激活请求，本进程接管了启动。
+	TookOver bool
 }
 
-// Acquire takes the single-instance mutex.
+// Acquire 获取单实例互斥体。
 //
-// It also tries the named pipe used by the Python edition, so launching the Go
-// build while the old build is running activates the old window instead of
-// starting a second recorder.
-func Acquire() (*Guard, bool) {
+// 它也会探测 Python 版使用的命名管道，使 Go 版在旧版运行时去激活旧窗口，
+// 而不是再启动一个记录器。
+//
+// isVisible 用于判断已有实例是否真的响应了激活请求（例如窗口重新显示）。
+// 若在 activationTimeout 内始终没有响应，Acquire 会接管启动并标记
+// TookOver，避免残留进程把所有后续启动都无声地吞掉。
+func Acquire(isVisible func() bool) (*Guard, bool) {
+	tookOver := false
 	if signalLegacyInstance() {
 		log.Printf("检测到 Python 版实例，已请求其激活窗口")
-		return nil, false
+		if waitForWindow(isVisible) {
+			log.Printf("Python 版实例已响应，本进程退出")
+			return nil, false
+		}
+		log.Printf("Python 版实例未响应，继续启动本实例")
+		tookOver = true
 	}
 
 	mutexPtr, _ := windows.UTF16PtrFromString(mutexName)
 	handle, err := windows.CreateMutex(nil, false, mutexPtr)
 	if err == windows.ERROR_ALREADY_EXISTS {
-		windows.CloseHandle(handle)
 		signalEvent()
-		return nil, false
+		if waitForWindow(isVisible) {
+			windows.CloseHandle(handle)
+			log.Printf("检测到已有实例，已激活其窗口，本进程退出")
+			return nil, false
+		}
+		log.Printf("已有实例未响应，接管启动")
+		return &Guard{mutex: handle, event: createEvent(), TookOver: true}, true
 	}
 	if err != nil {
 		log.Printf("单实例互斥体创建失败，继续启动: %v", err)
 		return &Guard{}, true
 	}
 
+	return &Guard{mutex: handle, event: createEvent(), TookOver: tookOver}, true
+}
+
+func createEvent() windows.Handle {
 	eventPtr, _ := windows.UTF16PtrFromString(eventName)
 	event, err := windows.CreateEvent(nil, 0, 0, eventPtr)
 	if err != nil {
 		log.Printf("激活事件创建失败: %v", err)
 	}
+	return event
+}
 
-	return &Guard{mutex: handle, event: event}, true
+// waitForWindow 轮询 isVisible，直到已有实例响应或超时。
+// isVisible 为空时按“已响应”处理，保持原有的保守行为。
+func waitForWindow(isVisible func() bool) bool {
+	if isVisible == nil {
+		return true
+	}
+	deadline := time.Now().Add(activationTimeout)
+	for {
+		if isVisible() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // WaitForActivation calls onActivate whenever another instance asks to show

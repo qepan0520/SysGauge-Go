@@ -23,11 +23,16 @@ func main() {
 	defer app.CloseLogging()
 	log.Printf("SysGauge %s 启动，日志: %s", ui.Version, logPath)
 
-	guard, acquired := app.Acquire()
+	guard, acquired := app.Acquire(func() bool {
+		return win32.VisibleWindowWithTitlePrefix(ui.WindowTitlePrefix)
+	})
 	if !acquired {
 		return
 	}
 	defer guard.Stop()
+	if guard.TookOver {
+		win32.MessageBox(0, ui.AppName, "检测到已有 SysGauge 实例但没有响应（可能残留在后台），已启动新实例。", 0x00000030)
+	}
 
 	cfg := config.Load()
 	if cfg.Language == "" {
