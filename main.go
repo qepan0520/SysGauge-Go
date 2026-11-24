@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/qepan0520/SysGauge-Go/internal/app"
 	"github.com/qepan0520/SysGauge-Go/internal/config"
@@ -17,6 +18,11 @@ import (
 )
 
 func main() {
+	// Win32 的窗口和消息队列绑定在创建它们的 OS 线程上。Go 的 goroutine 可能
+	// 在调度中迁移到其他线程，一旦迁移，消息循环就收不到自己窗口的消息，界面
+	// 会永远停在最后一帧并显示“未响应”。主 goroutine 必须固定在此线程上。
+	runtime.LockOSThread()
+
 	win32.EnableDPIAwareness()
 
 	logPath := app.SetupLogging()

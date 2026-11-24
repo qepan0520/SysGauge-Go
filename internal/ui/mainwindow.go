@@ -4,7 +4,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/qepan0520/SysGauge-Go/internal/config"
 	"github.com/qepan0520/SysGauge-Go/internal/i18n"
@@ -16,7 +20,7 @@ import (
 // AppName and Version are shown in the title bar and notifications.
 const (
 	AppName = "SysGauge"
-	Version = "2.0.1"
+	Version = "2.0.2"
 
 	// WindowTitlePrefix 是主窗口标题的固定前缀（两版一致），供单实例探测
 	// 判断已有窗口是否已经显示。
@@ -29,6 +33,8 @@ const (
 	initTrayMessage = win32.WM_APP + 11
 	// showMessage reveals the window once the message loop is running.
 	showMessage = win32.WM_APP + 12
+	// pingMessage is the UI-thread heartbeat used by the hang watchdog.
+	pingMessage = win32.WM_APP + 13
 
 	cmdShow = 1000 + iota
 	cmdStart
@@ -45,6 +51,9 @@ var (
 
 	// taskbarCreatedMessage 由 Explorer 重启后广播，用于重建托盘图标。
 	taskbarCreatedMessage uint32
+
+	// lastUIBeat 记录 UI 线程最后一次处理消息的时间，供看门狗判断是否卡死。
+	lastUIBeat atomic.Int64
 )
 
 // MainWindow hosts the custom-drawn dashboard inside a native frame.
@@ -143,6 +152,7 @@ func NewMainWindow(cfg *config.Config, smp *sampler.Sampler) (*MainWindow, error
 	})
 
 	m.createTrayDeferred()
+	m.startWatchdog()
 	// Reveal the window with the asynchronous variant: showing it inline can
 	// deadlock against a shell that is still busy with a previous instance.
 	win32.ShowWindowAsync(hwnd, win32.SW_SHOW)
@@ -217,6 +227,9 @@ func mainWindowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	}
 	m := value.(*MainWindow)
 
+	// 收到任何消息都说明 UI 线程还在正常派发，看门狗据此判断是否卡死。
+	lastUIBeat.Store(time.Now().UnixNano())
+
 	// Explorer 重启后系统会广播 TaskbarCreated，旧的托盘图标已随之消失，
 	// 必须重新添加，否则进程会变成一个没有任何入口的幽灵。
 	if taskbarCreatedMessage != 0 && msg == taskbarCreatedMessage {
@@ -226,6 +239,8 @@ func mainWindowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 	}
 
 	switch msg {
+	case pingMessage:
+		return 0
 	case win32.WM_SIZE:
 		m.resizeCanvas()
 		return 0
@@ -324,6 +339,49 @@ func (m *MainWindow) createTray() {
 	m.updateTray(nil)
 	m.dash.SetTrayAvailable(true)
 	log.Printf("托盘图标已创建: id=%d", m.trayID)
+}
+
+// startWatchdog 每 2 秒向主窗口投递一次心跳。UI 线程超过 10 秒没有处理任何
+// 消息就转储全部 goroutine 栈，便于在无控制台的 GUI 版本里定位卡死原因。
+func (m *MainWindow) startWatchdog() {
+	lastUIBeat.Store(time.Now().UnixNano())
+	go func() {
+		dumped := false
+		for {
+			time.Sleep(2 * time.Second)
+			win32.PostMessage(m.hwnd, pingMessage, 0, 0)
+			if time.Since(time.Unix(0, lastUIBeat.Load())) < 10*time.Second {
+				dumped = false
+				continue
+			}
+			if dumped {
+				continue
+			}
+			dumped = true
+			if path := writeStackDump(); path != "" {
+				log.Printf("UI 线程超过 10 秒未响应，goroutine 栈已写入 %s", path)
+			}
+		}
+	}()
+}
+
+// writeStackDump 把所有 goroutine 的栈写入日志目录，返回文件路径。
+func writeStackDump() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	logs := filepath.Join(dir, AppName, "logs")
+	if err := os.MkdirAll(logs, 0o755); err != nil {
+		return ""
+	}
+	path := filepath.Join(logs, "ui-hang-"+time.Now().Format("20060102-150405")+".txt")
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	if err := os.WriteFile(path, buf[:n], 0o644); err != nil {
+		return ""
+	}
+	return path
 }
 
 func (m *MainWindow) onTrayMessage(event uint32) {
